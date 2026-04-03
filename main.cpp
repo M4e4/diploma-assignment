@@ -9,8 +9,10 @@
 
 int main()
 {
+    SetConsoleOutputCP(CP_UTF8);
+    SetConsoleCP(CP_UTF8);
     std::setlocale(LC_ALL, "");
-    //SetConsoleOutputCP(CP_UTF8);
+
     Configuration config = parse("Configuration.ini");
 
     std::string connection = "host=" + config.dbHost +
@@ -22,7 +24,7 @@ int main()
     try
     {
         Database db(connection);
-        db.clear();
+        // db.clear(); // !!!
         db.initTables();
 
         Crawler crawler(config, db);

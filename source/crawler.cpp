@@ -31,7 +31,7 @@ std::string normalizeHost(std::string host)
 
 Crawler::Crawler(const Configuration& config, Database& db)
     : config(config), db(db),
-      pool(std::max(1u, std::thread::hardware_concurrency() - 2)) // -1(main) -1(crawler)
+      pool(std::max(1u, std::thread::hardware_concurrency() - 1))
 {
     UrlParts start = parseUrl(config.spiderStartUrl);
     baseHost = normalizeHost(start.host);

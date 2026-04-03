@@ -1,4 +1,5 @@
 #include "httpServer.h"
+#include "threadPool.h"
 #include <boost/beast/core.hpp>
 #include <boost/beast/http.hpp>
 #include <iostream>
@@ -137,6 +138,8 @@ void handleRequest(boost::asio::ip::tcp::socket socket, Database& db)
         boost::beast::http::request<boost::beast::http::string_body> req;
         boost::beast::http::read(socket, buffer, req);
 
+        if (req.target() == "/favicon.ico") return;
+
         boost::beast::http::response<boost::beast::http::string_body> result{ boost::beast::http::status::ok, req.version() };
         result.set(boost::beast::http::field::server, "SpiderSearch");
         result.set(boost::beast::http::field::content_type, "text/html; charset=utf-8");
@@ -206,6 +209,8 @@ void runSearchServer(const Configuration& config, Database& db)
 
         std::cout << "Server running on port " << config.serverPort << std::endl;
 
+        ThreadPool pool(std::max(2u, std::thread::hardware_concurrency() - 1));
+
         while (true)
         {
             boost::asio::ip::tcp::socket socket(ioc);
@@ -215,19 +220,11 @@ void runSearchServer(const Configuration& config, Database& db)
 
             if (!ec)
             {
-                std::thread(
-                    [&db](boost::asio::ip::tcp::socket s)
-                    {
-                        handleRequest(std::move(s), db);
-                    },
-                    std::move(socket)
-                ).detach();
-
-                std::cout << "Request handled in new thread\n";
+                pool.push([sock = std::make_shared<boost::asio::ip::tcp::socket>(std::move(socket)), &db]() {
+                    handleRequest(std::move(*sock), db);
+                    });
             }
         }
-
-        std::cout << "Server stopped." << std::endl;
     }
     catch (std::exception& e)
     {
