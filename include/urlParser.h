@@ -6,6 +6,7 @@
 struct UrlParts {
     std::string host;
     std::string target;
+    bool isHttps;
 };
 
 UrlParts parseUrl(const std::string& url);

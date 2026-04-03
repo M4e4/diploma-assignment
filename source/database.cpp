@@ -1,17 +1,20 @@
 #include "database.h"
 #include "indexer.h"
+#include <pqxx/pqxx>
+#include <mutex>
+#include <map>
+#include <vector>
+#include <string>
+#include <iostream>
 
 
 
 
 
 Database::Database(const std::string& connection)
-	:	connection(connection)
+    : connection(connection)
 {
-	if (!this->connection.is_open())
-	{
-		throw std::runtime_error("Failed to connect to the database!");
-	}
+    if (!this->connection.is_open()) throw std::runtime_error("Failed to connect to the database!");
 }
 
 
@@ -20,33 +23,33 @@ Database::Database(const std::string& connection)
 
 void Database::initTables()
 {
-	pqxx::work transaction(connection);
+    pqxx::work transaction(connection);
 
-	transaction.exec(R"(
-		CREATE TABLE IF NOT EXISTS Document (
-			id SERIAL PRIMARY KEY,
-			url TEXT UNIQUE,
-			content TEXT
-		)
-	)");
+    transaction.exec(R"(
+        CREATE TABLE IF NOT EXISTS Document (
+            id SERIAL PRIMARY KEY,
+            url TEXT UNIQUE,
+            content TEXT
+        )
+    )");
 
-	transaction.exec(R"(
-		CREATE TABLE IF NOT EXISTS Word (
-			id SERIAL PRIMARY KEY,
-			word TEXT UNIQUE
-		)
-	)");
+    transaction.exec(R"(
+        CREATE TABLE IF NOT EXISTS Word (
+            id SERIAL PRIMARY KEY,
+            word TEXT UNIQUE
+        )
+    )");
 
-	transaction.exec(R"(
-		CREATE TABLE IF NOT EXISTS WordCount (
-			document_id INT REFERENCES Document(id),
-			word_id INT REFERENCES Word(id),
-			count INT,
-			PRIMARY KEY (document_id, word_id)
-		)
-	)");
+    transaction.exec(R"(
+        CREATE TABLE IF NOT EXISTS WordCount (
+            document_id INT REFERENCES Document(id),
+            word_id INT REFERENCES Word(id),
+            count INT,
+            PRIMARY KEY (document_id, word_id)
+        )
+    )");
 
-	transaction.commit();
+    transaction.commit();
 }
 
 
@@ -55,45 +58,60 @@ void Database::initTables()
 
 int Database::saveDocument(const std::string& url, const std::string& content)
 {
-	std::lock_guard<std::mutex> lg(mtx);
-	pqxx::work transaction(connection);
-	pqxx::result result = transaction.exec(
-		"INSERT INTO Document (url, content) VALUES (" +
-		transaction.quote(url) + ", " + transaction.quote(content) + ") "
-		"ON CONFLICT (url) DO UPDATE SET content = EXCLUDED.content "
-		"RETURNING id"
-	);
+    std::lock_guard<std::mutex> lg(mtx);
 
-	transaction.commit();
+    pqxx::work transaction(connection);
 
-	return result[0][0].as<int>();
+    pqxx::result result = transaction.exec(
+        "INSERT INTO Document (url, content) VALUES (" +
+        transaction.quote(url) + ", " + transaction.quote(content) + ") "
+        "ON CONFLICT (url) DO UPDATE SET content = EXCLUDED.content "
+        "RETURNING id"
+    );
+
+    transaction.commit();
+
+    return result[0][0].as<int>();
 }
 
 
 
 
 
-void Database::saveWordStats(int document_id, const std::map<std::string, int> wordCount)
+void Database::saveWordStats(int document_id, const std::map<std::string, int>& wordCount)
 {
-	std::lock_guard<std::mutex> lg(mtx);
-	pqxx::work transaction(connection);
+    std::lock_guard<std::mutex> lg(mtx);
+    pqxx::work transaction(connection);
 
-	for (auto [word, count] : wordCount)
-	{
-		transaction.exec("INSERT INTO Word (word) VALUES (" + transaction.quote(word) + ") ON CONFLICT DO NOTHING");
+    for (auto [word, count] : wordCount)
+    {
+        pqxx::result r = transaction.exec(
+            "INSERT INTO Word (word) VALUES (" + transaction.quote(word) + ") "
+            "ON CONFLICT (word) DO UPDATE SET word = EXCLUDED.word "
+            "RETURNING id"
+        );
 
-		pqxx::result result = transaction.exec("SELECT id FROM Word WHERE word=" + transaction.quote(word));
-		int word_id = result[0][0].as<int>();
+        int word_id;
+        if (r.empty())
+        {
+            pqxx::result res = transaction.exec("SELECT id FROM Word WHERE word=" + transaction.quote(word));
+            word_id = res[0][0].as<int>();
+        }
+        else
+        {
+            word_id = r[0][0].as<int>();
+        }
 
-		transaction.exec("INSERT INTO WordCount (document_id, word_id, count) VALUES (" +
-			std::to_string(document_id) + ", " +
-			std::to_string(word_id) + ", " +
-			std::to_string(count) + ") " +
-			"ON CONFLICT (document_id, word_id) DO UPDATE SET count = EXCLUDED.count"
-		);
-	}
+        transaction.exec(
+            "INSERT INTO WordCount (document_id, word_id, count) VALUES (" +
+            std::to_string(document_id) + ", " +
+            std::to_string(word_id) + ", " +
+            std::to_string(count) + ") "
+            "ON CONFLICT (document_id, word_id) DO UPDATE SET count = EXCLUDED.count"
+        );
+    }
 
-	transaction.commit();
+    transaction.commit();
 }
 
 
@@ -102,43 +120,62 @@ void Database::saveWordStats(int document_id, const std::map<std::string, int> w
 
 std::vector<std::string> Database::search(const std::string& query)
 {
-	std::lock_guard<std::mutex> lg(mtx);
-	pqxx::work transaction(connection);
-	std::map<std::string, int> wordsMap = indexer(query);
-	std::vector<std::string> words;
+    try
+    {
+        std::lock_guard<std::mutex> lg(mtx);
 
-	for (auto& [word, count] : wordsMap) words.push_back(word);
+        pqxx::work transaction(connection);
+        std::map<std::string, int> wordsMap = indexer(query);
+        std::vector<std::string> words;
 
-	if (words.empty()) return {};
+        for (auto& [word, _] : wordsMap) words.push_back(word);
 
-	if (words.size() > 4) words.resize(4);
+        if (words.empty()) return {};
 
-	std::string inClause;
+        if (words.size() > 4) words.resize(4);
 
-	for (size_t i = 0; i < words.size(); ++i)
-	{
-		inClause += transaction.quote(words[i]);
-		if (i + 1 < words.size()) inClause += ",";
-	}
+        std::string inClause;
+        for (size_t i = 0; i < words.size(); ++i)
+        {
+            inClause += transaction.quote(words[i]);
+            if (i + 1 < words.size()) inClause += ",";
+        }
 
-	std::string sql =
-		"SELECT d.url, SUM(wc.count) AS relevance "
-		"FROM Document d "
-		"JOIN WordCount wc ON d.id = wc.document_id "
-		"JOIN Word w ON w.id = wc.word_id "
-		"WHERE w.word IN (" + inClause + ") "
-		"GROUP BY d.id "
-		"HAVING COUNT(DISTINCT w.word) = " + std::to_string(words.size()) + " "
-		"ORDER BY relevance DESC "
-		"LIMIT 10";
+        std::string sql =
+            "SELECT d.url, SUM(wc.count) AS relevance "
+            "FROM Document d "
+            "JOIN WordCount wc ON d.id = wc.document_id "
+            "JOIN Word w ON w.id = wc.word_id "
+            "WHERE w.word IN (" + inClause + ") "
+            "GROUP BY d.id "
+            "HAVING COUNT(DISTINCT w.word) = " + std::to_string(words.size()) + " "
+            "ORDER BY relevance DESC "
+            "LIMIT 10";
 
-	pqxx::result result = transaction.exec(sql);
-	std::vector<std::string> urls;
+        pqxx::result result = transaction.exec(sql);
+        std::vector<std::string> urls;
 
-	for (auto row : result)
-	{
-		urls.push_back(row["url"].c_str());
-	}
+        for (auto row : result)
+        {
+            if (row.size() > 0 && !row["url"].is_null()) urls.push_back(row["url"].c_str());
+        }
 
-	return urls;
+        return urls;
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "Database search error: " << e.what() << std::endl;
+        return {};
+    }
+}
+
+
+
+
+
+void Database::clear()
+{
+    pqxx::work tx(connection);
+    tx.exec("TRUNCATE TABLE WordCount, Document, Word RESTART IDENTITY");
+    tx.commit();
 }

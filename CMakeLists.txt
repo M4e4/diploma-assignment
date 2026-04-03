@@ -14,9 +14,11 @@ set(SOURCES
     "source/crawler.cpp"
     "source/httpClient.cpp"
     "source/httpParser.cpp"
+    "source/urlParser.cpp"
+    "source/httpServer.cpp"
 )
 
-add_executable(${PROJECT_NAME} ${SOURCES} "include/urlParser.h" "source/urlParser.cpp" "source/httpServer.cpp" "include/httpServer.h")
+add_executable(${PROJECT_NAME} ${SOURCES})
 
 target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_SOURCE_DIR}/include
@@ -25,6 +27,7 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 
 find_package(Boost REQUIRED COMPONENTS system thread regex locale filesystem)
 find_package(libpqxx CONFIG REQUIRED)
+find_package(OpenSSL REQUIRED)
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
     Boost::system
@@ -32,6 +35,6 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     Boost::regex
     Boost::locale
     Boost::filesystem
-
     libpqxx::pqxx
+    OpenSSL::SSL OpenSSL::Crypto
 )

@@ -12,8 +12,9 @@ public:
 public:
 	void initTables();
 	int saveDocument(const std::string& url, const std::string& content);
-	void saveWordStats(int document_id, const std::map<std::string, int> wordCount);
+	void saveWordStats(int document_id, const std::map<std::string, int>& wordCount);
 	std::vector<std::string> search(const std::string& query);
+	void clear();
 
 private:
 	pqxx::connection connection;

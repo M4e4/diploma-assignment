@@ -26,6 +26,7 @@ private:
 	ThreadPool pool;
 
 	std::mutex mtx;
+	std::string baseHost;
 	std::condition_variable cv;
 	std::unordered_set<std::string> visited;
 	std::unordered_set<std::string> seen;

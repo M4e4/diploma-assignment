@@ -1,36 +1,59 @@
 #include "indexer.h"
+#include <string>
+#include <map>
+#include <sstream>
+#include <locale>
+#include <codecvt>
 #include <regex>
-#include <iostream>
+#include <cwctype>
 
 
 
 
 
-std::string removeHtmlTags(const std::string& html)
+std::string removeHtmlTags(const std::string& html) 
 {
-	std::regex re("<.*?>");
-	return std::regex_replace(html, re, " ");
+    std::regex re("<.*?>");
+    return std::regex_replace(html, re, " ");
 }
 
 
 
 
 
-std::string cleanText(const std::string& text)
+std::wstring toWideString(const std::string& str)
 {
-    std::string result;
+    std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>, wchar_t> converter;
+    return converter.from_bytes(str);
+}
 
-    for (unsigned char ch : text)
+
+
+
+
+std::string toUtf8String(const std::wstring& wstr)
+{
+    std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>, wchar_t> converter;
+    return converter.to_bytes(wstr);
+}
+
+
+
+
+
+std::wstring cleanTextWide(const std::wstring& text)
+{
+    std::wstring result;
+    result.reserve(text.size());
+    std::locale loc("");
+    auto& facet = std::use_facet<std::ctype<wchar_t>>(loc);
+
+    for (wchar_t ch : text)
     {
-        if (ch < 128)
-        {
-            if (std::isalnum(ch)) result += std::tolower(ch);
-            else result += ' ';
-        }
+        if (facet.is(std::ctype_base::alnum, ch))
+            result += facet.tolower(ch);
         else
-        {
-            result += ch;
-        }
+            result += L' ';
     }
 
     return result;
@@ -39,21 +62,20 @@ std::string cleanText(const std::string& text)
 
 
 
-
 std::map<std::string, int> indexer(const std::string& text)
 {
-	std::string clean = cleanText(removeHtmlTags(text));
-	std::istringstream iss(clean);
-	std::string word;
-	std::map<std::string, int> result;
+    std::string clean = removeHtmlTags(text);
+    std::wstring wideClean = toWideString(clean);
+    wideClean = cleanTextWide(wideClean);
 
-	while (iss >> word)
-	{
-		if (word.size() >= 3 && word.size() <= 32)
-		{
-			result[word]++;
-		}
-	}
+    std::wistringstream wiss(wideClean);
+    std::wstring word;
+    std::map<std::string, int> result;
 
-	return result;
+    while (wiss >> word) 
+    {
+        if (word.size() >= 3 && word.size() <= 32) result[toUtf8String(word)]++;
+    }
+
+    return result;
 }
